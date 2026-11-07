@@ -1,4 +1,6 @@
-const CACHE = "vorratskammer-v2";
+
+const CACHE = "vorratskammer-v3";
+
 const FILES = [
   "./",
   "./index.html",
@@ -64,4 +66,49 @@ self.addEventListener("fetch", (event) => {
       )
     );
   }
+});
+
+// Push-Nachrichten empfangen
+self.addEventListener("push", (event) => {
+  let data = {};
+
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+
+  const title = data.title || "Meine Vorratskammer";
+  const options = {
+    body: data.body || "Du hast eine neue Erinnerung.",
+    icon: "./icon.svg",
+    badge: "./icon.svg",
+    data: {
+      url: "./"
+    }
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
+});
+
+// Beim Antippen der Nachricht die App öffnen
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  event.waitUntil(
+    clients.matchAll({
+      type: "window",
+      includeUncontrolled: true
+    }).then((windowClients) => {
+      for (const client of windowClients) {
+        if ("focus" in client) {
+          return client.focus();
+        }
+      }
+
+      return clients.openWindow("./");
+    })
+  );
 });
