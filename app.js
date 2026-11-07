@@ -17,7 +17,64 @@
   let foods = [];
   let shopping = [];
   let installPrompt = null;
+const VAPID_PUBLIC_KEY = "BG4pjNv4rx6BnRYzUAEvhfgNF4qwMJ6EPxQT4Pt_UeCfNcX_GTCMD45-bPnb6SPo8W5b5deVMMYVIEWsCOobTDI";
+  function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
 
+  const rawData = atob(base64);
+  return Uint8Array.from(rawData, (char) => char.charCodeAt(0));
+}
+
+async function enablePushNotifications() {
+  if (!user) {
+    throw new Error("Bitte melde dich zuerst an.");
+  }
+
+  if (!("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)) {
+    throw new Error("Push-Benachrichtigungen werden hier nicht unterstützt.");
+  }
+
+  const permission = await Notification.requestPermission();
+
+  if (permission !== "granted") {
+    throw new Error("Du hast Benachrichtigungen nicht erlaubt.");
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+
+  let subscription = await registration.pushManager.getSubscription();
+
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+  }
+
+  const subscriptionData = subscription.toJSON();
+
+  const { error } = await db
+    .from("push_subscriptions")
+    .upsert({
+      user_id: user.id,
+      endpoint: subscription.endpoint,
+      p256dh: subscriptionData.keys.p256dh,
+      auth_key: subscriptionData.keys.auth
+    }, {
+      onConflict: "endpoint"
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  showNotice("Push-Benachrichtigungen wurden aktiviert.");
+}
   const categoryIcons = {
     "Obst & Gemüse": "🥑",
     "Milchprodukte": "🥛",
@@ -80,6 +137,7 @@
       <div id="authSignedIn" class="hidden">
         <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
           <div><strong id="signedInEmail"></strong><p style="font-size:12px;color:#70796e;margin:4px 0 0;">Angemeldet</p></div>
+         <button class="button primary" id="enablePushButton" type="button">Erinnerungen aktivieren</button>
           <button class="button quiet" id="signOutButton" type="button">Abmelden</button>
         </div>
       </div>`;
@@ -331,6 +389,22 @@
   }
 
   function bindEvents() {
+    const pushButton = $("#enablePushButton");
+
+pushButton?.addEventListener("click", async () => {
+  pushButton.disabled = true;
+  pushButton.textContent = "Wird aktiviert …";
+
+  try {
+    await enablePushNotifications();
+    pushButton.textContent = "Erinnerungen aktiviert";
+  } catch (error) {
+    showNotice(`Aktivierung fehlgeschlagen: ${error.message}`, true);
+    pushButton.textContent = "Erinnerungen aktivieren";
+  } finally {
+    pushButton.disabled = false;
+  }
+});
     $("#authForm")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const email = $("#authEmail").value.trim();
