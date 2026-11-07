@@ -542,17 +542,113 @@ pushButton?.addEventListener("click", async () => {
     });
 
     $("#shoppingItems")?.addEventListener("change", async (event) => {
-      const checkbox = event.target.closest("[data-check-shopping]");
-      if (!checkbox || !household) return;
+  const checkbox = event.target.closest("[data-check-shopping]");
+  if (!checkbox || !household) return;
 
-      const { error } = await db.from("shopping_items")
-        .update({ is_checked: checkbox.checked })
-        .eq("id", checkbox.dataset.checkShopping)
-        .eq("household_id", household.id);
+  const item = shopping.find(
+    (x) => x.id === checkbox.dataset.checkShopping
+  );
 
-      if (error) return showNotice(`Änderung fehlgeschlagen: ${error.message}`, true);
+  if (!item) return;
+
+  // Bereits erledigten Einkauf wieder öffnen
+  if (!checkbox.checked) {
+    const { error } = await db.from("shopping_items")
+      .update({ is_checked: false })
+      .eq("id", item.id)
+      .eq("household_id", household.id);
+
+    if (error) {
+      showNotice(`Änderung fehlgeschlagen: ${error.message}`, true);
+      return;
+    }
+
+    await loadSharedData();
+    return;
+  }
+
+  // Menge abfragen
+  const quantityInput = prompt(
+    `Wie viel ${item.name} hast du gekauft?`,
+    String(item.quantity ?? 1)
+  );
+
+  if (quantityInput === null) {
+    checkbox.checked = false;
+    return;
+  }
+
+  const quantity = Number(quantityInput);
+
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    checkbox.checked = false;
+    showNotice("Bitte gib eine gültige Menge ein.", true);
+    return;
+  }
+
+  // Mindesthaltbarkeitsdatum abfragen
+  const expiry = prompt(
+    "Mindesthaltbarkeitsdatum (Format JJJJ-MM-TT). Leer lassen, wenn unbekannt."
+  );
+
+  if (expiry === null) {
+    checkbox.checked = false;
+    return;
+  }
+
+  if (
+    expiry &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(expiry)
+  ) {
+    checkbox.checked = false;
+    showNotice("Bitte gib das Datum im Format JJJJ-MM-TT ein.", true);
+    return;
+  }
+
+  checkbox.disabled = true;
+
+  try {
+    // Lebensmittel in den Vorrat übernehmen
+    const { error: insertError } = await db
+      .from("pantry_items")
+      .insert({
+        household_id: household.id,
+        name: item.name,
+        quantity,
+        unit: item.unit || "Stück",
+        category: "Sonstiges",
+        expires_on: expiry || null,
+        created_by: user.id
+      });
+
+    if (insertError) throw insertError;
+
+    // Erfolgreich übernommen: aus Einkaufsliste entfernen
+    const { error: deleteError } = await db
+      .from("shopping_items")
+      .delete()
+      .eq("id", item.id)
+      .eq("household_id", household.id);
+
+    if (deleteError) {
       await loadSharedData();
-    });
+      showNotice(
+        "Im Vorrat gespeichert. Der Einkauf konnte aber nicht aus der Einkaufsliste entfernt werden. Bitte dort manuell löschen.",
+        true
+      );
+      return;
+    }
+
+    await loadSharedData();
+    showNotice(`${item.name} wurde in den Vorrat übernommen.`);
+
+  } catch (error) {
+    checkbox.checked = false;
+    showNotice(`Übernahme fehlgeschlagen: ${error.message}`, true);
+  } finally {
+    checkbox.disabled = false;
+  }
+});
 
     $("#shoppingItems")?.addEventListener("click", async (event) => {
       const button = event.target.closest("[data-delete-shopping]");
